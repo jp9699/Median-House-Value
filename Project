@@ -1,0 +1,280 @@
+"Jeshwanth Pranav 
+Alternate_Class_Project
+Intro to Data Science 2020 
+"
+
+
+library(tidyverse)
+library(reshape2)
+library('randomForest')
+
+#1. Access The Data Set 
+housing = read.csv('housing.csv')
+print(head(housing))
+
+"longitude latitude housing_median_age total_rooms total_bedrooms population households
+1   -122.23    37.88                 41         880            129        322        126
+2   -122.22    37.86                 21        7099           1106       2401       1138
+3   -122.24    37.85                 52        1467            190        496        177
+4   -122.25    37.85                 52        1274            235        558        219
+5   -122.25    37.85                 52        1627            280        565        259
+6   -122.25    37.85                 52         919            213        413        193
+median_income median_house_value ocean_proximity
+1        8.3252             452600        NEAR BAY
+2        8.3014             358500        NEAR BAY
+3        7.2574             352100        NEAR BAY
+4        5.6431             341300        NEAR BAY
+5        3.8462             342200        NEAR BAY
+6        4.0368             269700        NEAR BAY"
+
+
+print(tail(housing))
+
+"longitude latitude housing_median_age total_rooms total_bedrooms population households
+20635   -121.56    39.27                 28        2332            395       1041        344
+20636   -121.09    39.48                 25        1665            374        845        330
+20637   -121.21    39.49                 18         697            150        356        114
+20638   -121.22    39.43                 17        2254            485       1007        433
+20639   -121.32    39.43                 18        1860            409        741        349
+20640   -121.24    39.37                 16        2785            616       1387        530
+      median_income median_house_value ocean_proximity
+20635        3.7125             116800          INLAND
+20636        1.5603              78100          INLAND
+20637        2.5568              77100          INLAND
+20638        1.7000              92300          INLAND
+20639        1.8672              84700          INLAND
+20640        2.3886              89400          INLAND"
+
+print(summary(housing))
+
+"longitude         latitude     housing_median_age  total_rooms    total_bedrooms  
+ Min.   :-124.3   Min.   :32.54   Min.   : 1.00      Min.   :    2   Min.   :   1.0  
+ 1st Qu.:-121.8   1st Qu.:33.93   1st Qu.:18.00      1st Qu.: 1448   1st Qu.: 296.0  
+ Median :-118.5   Median :34.26   Median :29.00      Median : 2127   Median : 435.0  
+ Mean   :-119.6   Mean   :35.63   Mean   :28.64      Mean   : 2636   Mean   : 537.9  
+ 3rd Qu.:-118.0   3rd Qu.:37.71   3rd Qu.:37.00      3rd Qu.: 3148   3rd Qu.: 647.0  
+ Max.   :-114.3   Max.   :41.95   Max.   :52.00      Max.   :39320   Max.   :6445.0  
+                                                                     NA's   :207     
+   population      households     median_income     median_house_value ocean_proximity   
+ Min.   :    3   Min.   :   1.0   Min.   : 0.4999   Min.   : 14999     Length:20640      
+ 1st Qu.:  787   1st Qu.: 280.0   1st Qu.: 2.5634   1st Qu.:119600     Class :character  
+ Median : 1166   Median : 409.0   Median : 3.5348   Median :179700     Mode  :character  
+ Mean   : 1425   Mean   : 499.5   Mean   : 3.8707   Mean   :206856                       
+ 3rd Qu.: 1725   3rd Qu.: 605.0   3rd Qu.: 4.7432   3rd Qu.:264725                       
+ Max.   :35682   Max.   :6082.0   Max.   :15.0001   Max.   :500001"
+
+#Comments
+#1. There are NA's in total_bedrooms and these must be given a value
+#2. Split the ocean_proximity into binary columns. Most machine learning algorithms in R can handle categoricals in a single column, but we will cater to the lowest common denominator and do the splitting.
+
+
+#2.Data Visualization
+par(mfrow=c(2,5))
+
+print(ggplot(data = melt(housing), mapping = aes(x = value)) + geom_histogram(bins = 30) + facet_wrap(~variable, scales = 'free_x'))
+
+# Observations
+#1. There are some housing blocks with old age homes in them.
+#2. The median house value has some weird cap applied to it causing there to be a blip at the rightmost point on the hist. There are most definitely houses in the bay area worth more than 500,000... even in the 90s when this data was collected!
+#3. We should standardize the scale of the data for any non-tree based methods. As some of the variables range from 0-10, while others go up to 500,000
+
+#3. Data Transformation
+housing$total_bedrooms[is.na(housing$total_bedrooms)] = median(housing$total_bedrooms , na.rm = TRUE) #Fill median for total_bedrooms which is the only column with missing values.
+
+housing$mean_bedrooms = housing$total_bedrooms/housing$households           #Fix the total columns - make them means
+housing$mean_rooms = housing$total_rooms/housing$households 
+drops = c('total_bedrooms', 'total_rooms')
+housing = housing[ , !(names(housing) %in% drops)]
+print(head(housing))
+"longitude latitude housing_median_age population households median_income median_house_value
+1   -122.23    37.88                 41        322        126        8.3252             452600
+2   -122.22    37.86                 21       2401       1138        8.3014             358500
+3   -122.24    37.85                 52        496        177        7.2574             352100
+4   -122.25    37.85                 52        558        219        5.6431             341300
+5   -122.25    37.85                 52        565        259        3.8462             342200
+6   -122.25    37.85                 52        413        193        4.0368             269700
+  ocean_proximity mean_bedrooms mean_rooms
+1        NEAR BAY     1.0238095   6.984127
+2        NEAR BAY     0.9718805   6.238137
+3        NEAR BAY     1.0734463   8.288136
+4        NEAR BAY     1.0730594   5.817352
+5        NEAR BAY     1.0810811   6.281853
+6        NEAR BAY     1.1036269   4.761658"
+
+categories = unique(housing$ocean_proximity)
+#split the categories off
+cat_housing = data.frame(ocean_proximity = housing$ocean_proximity)
+
+for(cat in categories){
+  cat_housing[,cat] = rep(0, times= nrow(cat_housing))
+}
+
+print(head(cat_housing)) #see the new columns on the right
+" ocean_proximity NEAR BAY <1H OCEAN INLAND NEAR OCEAN ISLAND
+1        NEAR BAY        0         0      0          0      0
+2        NEAR BAY        0         0      0          0      0
+3        NEAR BAY        0         0      0          0      0
+4        NEAR BAY        0         0      0          0      0
+5        NEAR BAY        0         0      0          0      0
+6        NEAR BAY        0         0      0   "
+
+for(i in 1:length(cat_housing$ocean_proximity)){
+  cat = as.character(cat_housing$ocean_proximity[i])
+  cat_housing[,cat][i] = 1
+}
+
+print(head(cat_housing))
+" ocean_proximity NEAR BAY <1H OCEAN INLAND NEAR OCEAN ISLAND
+1        NEAR BAY        1         0      0          0      0
+2        NEAR BAY        1         0      0          0      0
+3        NEAR BAY        1         0      0          0      0
+4        NEAR BAY        1         0      0          0      0
+5        NEAR BAY        1         0      0          0      0
+6        NEAR BAY        1         0      0          0      0"
+
+cat_columns = names(cat_housing)
+keep_columns = cat_columns[cat_columns != 'ocean_proximity']
+cat_housing = select(cat_housing,one_of(keep_columns))
+
+tail(cat_housing)
+" NEAR BAY <1H OCEAN INLAND NEAR OCEAN ISLAND
+20635        0         0      1          0      0
+20636        0         0      1          0      0
+20637        0         0      1          0      0
+20638        0         0      1          0      0
+20639        0         0      1          0      0
+20640        0         0      1          0      0"
+
+drops = c('ocean_proximity','median_house_value')
+housing_num =  housing[ , !(names(housing) %in% drops)]
+
+print(head(housing_num))
+"longitude latitude housing_median_age population households median_income mean_bedrooms
+1   -122.23    37.88                 41        322        126        8.3252     1.0238095
+2   -122.22    37.86                 21       2401       1138        8.3014     0.9718805
+3   -122.24    37.85                 52        496        177        7.2574     1.0734463
+4   -122.25    37.85                 52        558        219        5.6431     1.0730594
+5   -122.25    37.85                 52        565        259        3.8462     1.0810811
+6   -122.25    37.85                 52        413        193        4.0368     1.1036269
+  mean_rooms
+1   6.984127
+2   6.238137
+3   8.288136
+4   5.817352
+5   6.281853
+6   4.761658"
+
+scaled_housing_num = scale(housing_num)
+print(head(scaled_housing_num))
+"print(head(scaled_housing_num))
+     longitude latitude housing_median_age population households median_income mean_bedrooms
+[1,] -1.327803 1.052523          0.9821189 -0.9744050 -0.9770092    2.34470896  -0.148510661
+[2,] -1.322812 1.043159         -0.6070042  0.8614180  1.6699206    2.33218146  -0.248535936
+[3,] -1.332794 1.038478          1.8561366 -0.8207575 -0.8436165    1.78265622  -0.052900657
+[4,] -1.337785 1.038478          1.8561366 -0.7660095 -0.7337637    0.93294491  -0.053646030
+[5,] -1.337785 1.038478          1.8561366 -0.7598283 -0.6291419   -0.01288068  -0.038194658
+[6,] -1.337785 1.038478          1.8561366 -0.8940491 -0.8017678    0.08744452   0.005232996
+     mean_rooms
+[1,]  0.6285442
+[2,]  0.3270334
+[3,]  1.1555925
+[4,]  0.1569623
+[5,]  0.3447024
+[6,] -0.2697231"
+
+cleaned_housing = cbind(cat_housing, scaled_housing_num, median_house_value=housing$median_house_value)
+print(head(cleaned_housing))
+
+"NEAR BAY <1H OCEAN INLAND NEAR OCEAN ISLAND longitude latitude housing_median_age population
+1        1         0      0          0      0 -1.327803 1.052523          0.9821189 -0.9744050
+2        1         0      0          0      0 -1.322812 1.043159         -0.6070042  0.8614180
+3        1         0      0          0      0 -1.332794 1.038478          1.8561366 -0.8207575
+4        1         0      0          0      0 -1.337785 1.038478          1.8561366 -0.7660095
+5        1         0      0          0      0 -1.337785 1.038478          1.8561366 -0.7598283
+6        1         0      0          0      0 -1.337785 1.038478          1.8561366 -0.8940491
+  households median_income mean_bedrooms mean_rooms median_house_value
+1 -0.9770092    2.34470896  -0.148510661  0.6285442             452600
+2  1.6699206    2.33218146  -0.248535936  0.3270334             358500
+3 -0.8436165    1.78265622  -0.052900657  1.1555925             352100
+4 -0.7337637    0.93294491  -0.053646030  0.1569623             341300
+5 -0.6291419   -0.01288068  -0.038194658  0.3447024             342200
+6 -0.8017678    0.08744452   0.005232996 -0.2697231             269700"
+
+
+#4. Create Training and Test Sets 
+
+set.seed(1738)
+sample = sample.int(n = nrow(cleaned_housing), size = floor(.75*nrow(cleaned_housing)), replace = F)
+train = cleaned_housing[sample, ]
+test  = cleaned_housing[-sample, ]
+
+
+#5. Supervised Machine Learning - Regression
+
+set.seed(1738)
+train_y = train[,'median_house_value']
+train_x = train[, names(train) !='median_house_value']
+
+rf = randomForest(x=train_x, y = train_y , ntree = 500, importance = TRUE)
+
+print(names(rf))
+#[1] "call"            "type"            "predicted"       "mse"             "rsq"            
+#[6] "oob.times"       "importance"      "importanceSD"    "localImportance" "proximity"      
+#[11] "ntree"           "mtry"            "forest"          "coefs"           "y"              
+#[16] "test"            "inbag"    
+print (rf$importance)
+
+"                        %IncMSE IncNodePurity
+NEAR BAY            428795201.0  1.316384e+12
+<1H OCEAN          1575228244.2  4.047034e+12
+INLAND             3989643515.7  2.929344e+13
+NEAR OCEAN          577328623.7  2.425011e+12
+ISLAND                 451172.2  4.862537e+10
+longitude          6564132628.9  2.312774e+13
+latitude           5332114860.0  2.084245e+13
+housing_median_age 1136614180.1  9.320148e+12
+population         1054211474.2  7.051870e+12
+households         1202887361.4  7.474274e+12
+median_income      8568169038.4  6.810480e+13
+mean_bedrooms       415948418.1  7.050389e+12
+mean_rooms         1796263614.1  1.981355e+13"
+
+
+
+#6. Evaluating Model Performance
+oob_prediction = predict(rf)
+train_mse = mean(as.numeric((oob_prediction - train_y)^2))
+oob_rmse = sqrt(train_mse)
+print("training set RMSE:")
+
+#[1] "training set RMSE:"
+
+print(oob_rmse)
+
+#[1] 49500.33
+
+test_y = test[,'median_house_value']
+test_x = test[, names(test) !='median_house_value']
+ 
+y_pred = predict(rf, test_x)
+test_mse = mean(((y_pred - test_y)^2))
+test_rmse = sqrt(test_mse)
+print("test set RMSE:")
+
+#[1] "test set RMSE:"
+
+print(test_rmse)
+
+#[1] 48580.31
+
+#Question. How does the test set RMSE compare with the training set RMSE? Did the model score roughly the same on the training and testing data, suggesting that it is not overfit and that it makes good predictions?
+
+# Ans. Our model scored roughly the same on the training and testing data, suggesting that it is not overfit and that it makes good predictions.
+
+
+
+
+
+
+
+                                                                                                 
